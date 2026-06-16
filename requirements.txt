@@ -1,0 +1,9 @@
+faster-whisper>=1.0.3
+PyAudioWPatch>=0.2.12.7
+numpy>=1.24
+# GPU runtime libs for ctranslate2 (CUDA 12 + cuDNN 9)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+# Qwen 3 1.7B local translation
+transformers>=4.40
+accelerate>=0.30

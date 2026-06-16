@@ -1,0 +1,5 @@
+{
+  "hf_token": "hf_YOUR_HUGGINGFACE_TOKEN",
+  "gemini_api_key": "YOUR_GEMINI_API_KEY",
+  "qwen_model": "Qwen/Qwen3-1.7B"
+}
