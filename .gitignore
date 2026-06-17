@@ -6,3 +6,5 @@ config.json
 *.egg-info/
 dist/
 build/
+presentation/
+t.txt
