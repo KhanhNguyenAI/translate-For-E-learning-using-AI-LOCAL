@@ -17,10 +17,12 @@ from config import (
 )
 from audio import AudioLoopback, AudioMic, list_loopback_devices, list_mic_devices
 from stt import (
-    Transcriber, load_diarization_pipeline, HAS_DIARIZATION, _speaker_registry,
+    Transcriber, ReazonSpeechTranscriber, load_diarization_pipeline, _speaker_registry,
 )
+import stt.diarization as _diar_mod
 from translation import TERMS_PATH, _custom_terms, _build_terms_hint
 from translation.qwen import TranslatorThread
+from translation.analysis import ANALYSIS_MODES, AnalysisThread
 from tts import (
     TTSThread, list_output_devices, get_voices_for_lang,
     TTS_DEFAULT_VOICE, TTS_SPEED_OPTIONS,
@@ -63,7 +65,7 @@ class App:
         self._last_speaker = None
         self._font_size = DEFAULT_FONT_SIZE
         self._dual_mode = True
-        self._translate_on = True
+        self._translate_on = False
         self._tts_on = False
         self._seg_counter = 0
         self._pending_vi = {}
@@ -99,6 +101,22 @@ class App:
         self._tgt_combo.current(self._lang_codes.index("vi"))
         self._tgt_combo.pack(side="left", padx=(2, 4))
         self._tgt_combo.bind("<<ComboboxSelected>>", self._on_lang_change)
+
+        # - STT Engine selector -
+        self._engine_var = tk.StringVar(value="Whisper")
+        self._engine_combo = ttk.Combobox(
+            top, textvariable=self._engine_var,
+            values=["Whisper", "ReazonSpeech"], state="readonly", width=12,
+        )
+        self._engine_combo.pack(side="left", padx=(4, 2))
+
+        # - Chunk size selector -
+        self._chunk_var = tk.StringVar(value="4s")
+        self._chunk_combo = ttk.Combobox(
+            top, textvariable=self._chunk_var,
+            values=["1s", "2s", "4s", "6s", "8s", "10s"], state="readonly", width=4,
+        )
+        self._chunk_combo.pack(side="left", padx=(0, 2))
 
         # - Start button -
         self.btn = tk.Button(top, text="▶ Start", width=8, command=self.toggle,
@@ -153,13 +171,13 @@ class App:
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=4, pady=2)
 
         # - Group 4: Toggles & Settings -
-        self._use_diarization = tk.BooleanVar(value=True)
+        self._use_diarization = tk.BooleanVar(value=False)
         tk.Checkbutton(
             top, text="\U0001f465", variable=self._use_diarization,
             font=("Segoe UI", 9), fg="#aaa", selectcolor="#1a1a2e",
         ).pack(side="left", padx=1)
 
-        self._use_translate = tk.BooleanVar(value=True)
+        self._use_translate = tk.BooleanVar(value=False)
         self._use_translate.trace_add("write", self._on_translate_toggle)
         tk.Checkbutton(
             top, text="\U0001f310", variable=self._use_translate,
@@ -173,6 +191,13 @@ class App:
             top, text="\U0001f508", variable=self._use_tts,
             font=("Segoe UI", 9, "bold"), fg="#ffb74d", selectcolor="#1a1a2e",
             state=tts_state,
+        ).pack(side="left", padx=1)
+
+        self._use_analysis = tk.BooleanVar(value=False)
+        self._use_analysis.trace_add("write", self._on_analysis_toggle)
+        tk.Checkbutton(
+            top, text="🧠", variable=self._use_analysis,
+            font=("Segoe UI", 9, "bold"), fg="#d2a8ff", selectcolor="#1a1a2e",
         ).pack(side="left", padx=1)
 
         self.dual_btn = tk.Button(
@@ -292,6 +317,36 @@ class App:
         self.text_vi.pack(fill="both", expand=True)
         self._panels.add(self._vi_frame, stretch="always")
 
+        # Panel AI Analysis (right)
+        self._ai_frame = tk.Frame(self._panels, bg="#0d1117")
+        self._ai_analysis_label = tk.Label(
+            self._ai_frame, text="🧠 AI Analysis", anchor="w",
+            bg="#0d1117", fg="#d2a8ff",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self._ai_analysis_label.pack(fill="x", padx=4)
+
+        ai_btn_bar = tk.Frame(self._ai_frame, bg="#0d1117")
+        ai_btn_bar.pack(fill="x", padx=2, pady=(0, 2))
+        for mode_key, mode_cfg in ANALYSIS_MODES.items():
+            tk.Button(
+                ai_btn_bar, text=mode_cfg["label"], width=12,
+                command=lambda m=mode_key: self._run_analysis(m),
+                bg="#21262d", fg="#c9d1d9", font=("Segoe UI", 8),
+                activebackground="#30363d", activeforeground="white",
+                relief="flat",
+            ).pack(side="left", padx=1)
+
+        self.text_ai = scrolledtext.ScrolledText(
+            self._ai_frame, wrap="word", font=("Segoe UI", self._font_size),
+            bg="#111", fg="#d2a8ff", insertbackground="#d2a8ff", relief="flat",
+        )
+        self.text_ai.pack(fill="both", expand=True)
+        # hidden by default — toggled via 🧠 checkbox
+
+        self._analysis_queue = queue.Queue()
+        self._qwen_instance = None
+
         self.text = self.text_jp
         self._update_panel_labels()
 
@@ -355,6 +410,13 @@ class App:
         else:
             self._panels.forget(self._vi_frame)
             self.dual_btn.config(text="\U0001f4c4 Single", bg="#21262d")
+
+    # ── Analysis toggle ─────────────────────────────────────────────
+    def _on_analysis_toggle(self, *_):
+        if self._use_analysis.get():
+            self._panels.add(self._ai_frame, stretch="always")
+        else:
+            self._panels.forget(self._ai_frame)
 
     # ── Translate toggle ──────────────────────────────────────────────
     def _on_translate_toggle(self, *_):
@@ -501,7 +563,7 @@ class App:
 
     def _load_diarization(self):
         load_diarization_pipeline()
-        if HAS_DIARIZATION:
+        if _diar_mod.HAS_DIARIZATION:
             self.status_queue.put("Diarization OK. Đang nghe loa...")
 
     # ── Start / Stop ──────────────────────────────────────────────────
@@ -517,8 +579,10 @@ class App:
         self.dev_combo.config(state="disabled")
         self._src_combo.config(state="disabled")
         self._tgt_combo.config(state="disabled")
+        self._engine_combo.config(state="disabled")
+        self._chunk_combo.config(state="disabled")
 
-        if not HAS_DIARIZATION and HF_TOKEN:
+        if not _diar_mod.HAS_DIARIZATION and HF_TOKEN:
             self.set_status("Đang tải diarization model...")
             threading.Thread(target=self._load_diarization, daemon=True).start()
 
@@ -537,14 +601,27 @@ class App:
             self.dev_combo.config(state="readonly")
             self._src_combo.config(state="readonly")
             self._tgt_combo.config(state="readonly")
+            self._engine_combo.config(state="readonly")
+            self._chunk_combo.config(state="readonly")
             return
 
-        self.transcriber = Transcriber(
-            self.frame_queue, self.text_queue, self.status_queue,
-            lambda: (self.audio.device_rate, self.audio.channels),
-            use_diarization=self._use_diarization,
-            get_src_lang=self._get_src_lang,
-        )
+        engine = self._engine_var.get()
+        chunk_sec = float(self._chunk_var.get().replace("s", ""))
+        if engine == "ReazonSpeech":
+            self.transcriber = ReazonSpeechTranscriber(
+                self.frame_queue, self.text_queue, self.status_queue,
+                lambda: (self.audio.device_rate, self.audio.channels),
+                get_src_lang=self._get_src_lang,
+                chunk_sec=chunk_sec,
+            )
+        else:
+            self.transcriber = Transcriber(
+                self.frame_queue, self.text_queue, self.status_queue,
+                lambda: (self.audio.device_rate, self.audio.channels),
+                use_diarization=self._use_diarization,
+                get_src_lang=self._get_src_lang,
+                chunk_sec=chunk_sec,
+            )
         self.transcriber.start()
 
         # Auto-start translator nếu dịch đang bật
@@ -557,6 +634,8 @@ class App:
         self.dev_combo.config(state="readonly")
         self._src_combo.config(state="readonly")
         self._tgt_combo.config(state="readonly")
+        self._engine_combo.config(state="readonly")
+        self._chunk_combo.config(state="readonly")
         if self.transcriber:
             self.transcriber.stop()
             self.transcriber = None
@@ -731,12 +810,46 @@ class App:
 
             self._smart_scroll(self.text_vi)
 
+        # AI Analysis results
+        while not self._analysis_queue.empty():
+            kind, payload = self._analysis_queue.get()
+            if kind == "result":
+                self.text_ai.insert("end", payload + "\n\n", "ai_result")
+                self.text_ai.tag_configure("ai_result", foreground="#d2a8ff")
+            else:
+                self.text_ai.insert("end", payload + "\n", "ai_err")
+                self.text_ai.tag_configure("ai_err", foreground="#f85149")
+            self._smart_scroll(self.text_ai)
+
         # Lỗi dịch
         while not self.err_queue.empty():
             err = self.err_queue.get()
             self.set_status(f"⚠️ {err}")
 
         self.root.after(100, self.poll)
+
+    # ── AI Analysis ────────────────────────────────────────────────
+    def _run_analysis(self, mode):
+        content = self.text_jp.get("1.0", "end").strip()
+        if not content:
+            self.set_status("⚠️ Chưa có nội dung để phân tích")
+            return
+
+        cfg = ANALYSIS_MODES[mode]
+        self.text_ai.insert("end", f"── {cfg['label']} ──\n", "ai_header")
+        self.text_ai.tag_configure("ai_header", foreground="#58a6ff", font=("Segoe UI", self._font_size, "bold"))
+        self._smart_scroll(self.text_ai)
+
+        src = self._get_src_lang()
+        t = AnalysisThread(
+            result_queue=self._analysis_queue,
+            status_queue=self.status_queue,
+            text=content,
+            mode=mode,
+            tgt_lang=src,
+            qwen_instance=self._qwen_instance,
+        )
+        t.start()
 
     # ── Terms Editor ────────────────────────────────────────────────
     def _open_terms_editor(self):

@@ -31,10 +31,13 @@ def find_copilot_hwnd():
                 user32.GetWindowTextW(hwnd, buf, length + 1)
                 title = buf.value.lower()
                 if "copilot" in title:
+                    print(f"[AI-debug] Copilot window found: hwnd={hwnd}, title='{buf.value}'")
                     found.append(hwnd)
         return True
 
     user32.EnumWindows(_cb, 0)
+    if not found:
+        print("[AI-debug] Copilot window NOT found")
     return found[0] if found else None
 
 
@@ -43,9 +46,11 @@ def open_or_focus_copilot():
     user32 = ctypes.windll.user32
     hwnd = find_copilot_hwnd()
     if hwnd:
-        user32.ShowWindow(hwnd, 9)        # SW_RESTORE
+        print(f"[AI-debug] Copilot: focusing existing hwnd={hwnd}")
+        user32.ShowWindow(hwnd, 9)
         user32.SetForegroundWindow(hwnd)
         return hwnd
+    print("[AI-debug] Copilot: launching new instance")
 
     # Thử mở bằng Windows Store app ID
     opened = False
@@ -82,6 +87,7 @@ def click_copilot_input(hwnd):
     x = rect.left + win_w // 2
     y = rect.top  + int(win_h * 0.88)
 
+    print(f"[AI-debug] Copilot click: window=({rect.left},{rect.top},{rect.right},{rect.bottom}) size={win_w}x{win_h} click=({x},{y})")
     user32.SetCursorPos(x, y)
     time.sleep(0.05)
     user32.mouse_event(0x0002, 0, 0, 0, 0)   # MOUSEEVENTF_LEFTDOWN
@@ -160,6 +166,7 @@ def click_claude_input(hwnd):
 
 # -------- ChatGPT --------
 CHATGPT_APP_IDS = [
+    "OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0!ChatGPT",
     "OpenAI.ChatGPT_2p2nf5s2dxmpy!App",
     "OpenAI.ChatGPT_8wekyb3d8bbwe!App",
 ]
@@ -179,10 +186,13 @@ def find_chatgpt_hwnd():
                 user32.GetWindowTextW(hwnd, buf, length + 1)
                 title = buf.value
                 if "ChatGPT" in title:
+                    print(f"[AI-debug] ChatGPT window found: hwnd={hwnd}, title='{title}'")
                     found.append(hwnd)
         return True
 
     user32.EnumWindows(_cb, 0)
+    if not found:
+        print("[AI-debug] ChatGPT window NOT found")
     return found[0] if found else None
 
 
@@ -191,10 +201,11 @@ def open_or_focus_chatgpt():
     user32 = ctypes.windll.user32
     hwnd = find_chatgpt_hwnd()
     if hwnd:
+        print(f"[AI-debug] ChatGPT: focusing existing hwnd={hwnd}")
         user32.ShowWindow(hwnd, 9)
         user32.SetForegroundWindow(hwnd)
         return hwnd
-
+    print("[AI-debug] ChatGPT: launching new instance")
     for app_id in CHATGPT_APP_IDS:
         try:
             subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app_id}"])
@@ -214,8 +225,9 @@ def click_chatgpt_input(hwnd):
     win_h = rect.bottom - rect.top
 
     x = rect.left + win_w // 2
-    y = rect.top  + int(win_h * 0.90)
+    y = rect.top  + int(win_h * 0.93)
 
+    print(f"[AI-debug] ChatGPT click: window size={win_w}x{win_h} click=({x},{y})")
     user32.SetCursorPos(x, y)
     time.sleep(0.05)
     user32.mouse_event(0x0002, 0, 0, 0, 0)
