@@ -43,6 +43,8 @@ except ImportError:
 
 _all_tts_voices: dict[str, list[dict]] = {}
 
+tts_speaking = threading.Event()
+
 
 def _load_all_tts_voices():
     """Load voice list từ Edge TTS, cache theo locale."""
@@ -152,8 +154,10 @@ class TTSThread(threading.Thread):
             f.write(buf.read())
             tmp_path = f.name
         try:
+            tts_speaking.set()
             _play_mp3_on_device(tmp_path, self._get_output_device())
         finally:
+            tts_speaking.clear()
             try:
                 os.remove(tmp_path)
             except Exception:

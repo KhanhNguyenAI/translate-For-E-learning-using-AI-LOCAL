@@ -15,14 +15,13 @@ from config import (
     CHUNK_SEC, OVERLAP_SEC, RMS_THRESHOLD, HALLUCINATIONS,
 )
 from audio.loopback import to_mono_16k
-from stt.diarization import (
-    HAS_DIARIZATION, diarize_audio, assign_speaker_color,
-)
+import stt.diarization as _diar_mod
+from stt.diarization import diarize_audio, assign_speaker_color
 
 
 class Transcriber(threading.Thread):
     def __init__(self, frame_queue, text_queue, status_queue, get_params,
-                 use_diarization=None, get_src_lang=None):
+                 use_diarization=None, get_src_lang=None, chunk_sec=None):
         super().__init__(daemon=True)
         self.frame_queue      = frame_queue
         self.text_queue       = text_queue
@@ -30,6 +29,7 @@ class Transcriber(threading.Thread):
         self.get_params       = get_params
         self._use_diarization = use_diarization  # tk.BooleanVar
         self._get_src_lang    = get_src_lang or (lambda: "ja")
+        self._chunk_sec       = chunk_sec or CHUNK_SEC
         self.model = None
         self._stop = threading.Event()
         self.model_ready = threading.Event()
@@ -48,7 +48,7 @@ class Transcriber(threading.Thread):
                 self.status_queue.put(f"❌ Whisper load thất bại: {e2}")
                 return
         self.model_ready.set()  # báo hiệu Whisper đã load xong
-        if HAS_DIARIZATION:
+        if _diar_mod.HAS_DIARIZATION:
             self.status_queue.put("Sẵn sàng (Diarization ON). Đang nghe loa...")
         else:
             self.status_queue.put("Sẵn sàng. Đang nghe loa...")
@@ -57,7 +57,7 @@ class Transcriber(threading.Thread):
         self.load_model()
         buf = np.zeros(0, dtype=np.float32)
         overlap = np.zeros(0, dtype=np.float32)
-        chunk_samples = int(CHUNK_SEC * TARGET_SR)
+        chunk_samples = int(self._chunk_sec * TARGET_SR)
         last_vol_t = time.time()
 
         while not self._stop.is_set():
@@ -85,6 +85,9 @@ class Transcriber(threading.Thread):
 
     def _transcribe(self, audio):
         try:
+            from tts.engine import tts_speaking
+            if tts_speaking.is_set():
+                return
             rms = float(np.sqrt(np.mean(audio**2)))
             if rms < RMS_THRESHOLD:
                 return
@@ -92,7 +95,7 @@ class Transcriber(threading.Thread):
                 return
             diar_on = (self._use_diarization is None or self._use_diarization.get())
             diar_future = []
-            if HAS_DIARIZATION and diar_on:
+            if _diar_mod.HAS_DIARIZATION and diar_on:
                 t = threading.Thread(
                     target=lambda: diar_future.append(diarize_audio(audio)),
                     daemon=True,
@@ -124,7 +127,7 @@ class Transcriber(threading.Thread):
             if stripped in hall_set:
                 return
 
-            if HAS_DIARIZATION and diar_on:
+            if _diar_mod.HAS_DIARIZATION and diar_on:
                 t.join(timeout=8.0)
                 turns = diar_future[0] if diar_future else []
 

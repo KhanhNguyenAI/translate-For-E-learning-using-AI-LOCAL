@@ -4,3 +4,4 @@ from .diarization import (
     HAS_DIARIZATION, _speaker_registry,
 )
 from .transcriber import Transcriber
+from .sensevoice import ReazonSpeechTranscriber

@@ -10,3 +10,6 @@ accelerate>=0.30
 # TTS (Edge TTS - Microsoft Neural Voices)
 edge-tts>=7.0
 pygame>=2.5
+# ReazonSpeech (fast Japanese-specialized STT)
+sherpa-onnx>=1.10
+reazonspeech-k2-asr>=3.0
