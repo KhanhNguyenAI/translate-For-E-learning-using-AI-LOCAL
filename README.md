@@ -1,6 +1,8 @@
 # 🎙 Interview STT — Real-time Speech-to-Text & Translation
 
-**Fully local, GPU-accelerated** real-time speech-to-text and translation app designed for online interviews (Teams, Zoom, Google Meet). Captures speaker audio via WASAPI loopback or microphone, transcribes with Whisper, translates with Qwen 3 — all running on your GPU. Zero cloud cost.
+> **Version:** `v20260622` — [Changelog](CHANGELOG.md) | [Previous version (v1.0)](../../tree/v1.0)
+
+**Fully local, GPU-accelerated** real-time speech-to-text, translation, and AI analysis app designed for online interviews (Teams, Zoom, Google Meet). Captures speaker audio via WASAPI loopback or microphone, transcribes with Whisper or ReazonSpeech, translates with Qwen 3, and provides AI-powered content analysis — all running locally. Zero cloud cost.
 
 ![UI Mockup](docs/ui-mockup.svg)
 
@@ -11,10 +13,12 @@
 ![Features Overview](docs/features.svg)
 
 ### Core
-- **Multi-language STT** — Whisper medium supports 99 languages. Select input/output language before starting
+- **Dual STT engine** — Whisper medium (99 languages, GPU) or ReazonSpeech k2-asr (Japanese-specialized, CPU)
+- **Adjustable chunk size** — 1s / 2s / 4s / 6s / 8s / 10s transcription interval for speed vs accuracy
 - **Local AI translation** — Qwen 3 1.7B runs entirely on GPU. Zero API cost, fully offline
+- **AI Analysis** — Qwen-powered panel with 4 modes: Summary, Keywords, Issues, Answer Suggestions
 - **Speaker diarization** — pyannote.audio identifies and color-codes up to 5 speakers across chunks
-- **Dual panel UI** — Source text (left) + translation (right) with draggable divider
+- **3-panel UI** — Source (STT) | Translation | AI Analysis with toggleable panels
 - **FIFO segment pairing** — Each source segment gets a `seg_id`, translation replaces the `⏳` placeholder when ready
 
 ### Audio
@@ -26,6 +30,10 @@
 - **1-click AI query** — Split button: click sends, dropdown selects AI
 - **3 AI options** — Microsoft Copilot, Claude Desktop, ChatGPT
 - **Window automation** — Auto-find window → focus → click input → paste → send (Win32 API)
+
+### TTS (Text-to-Speech)
+- **Edge TTS** — Microsoft Neural Voices for reading translations aloud
+- **TTS feedback prevention** — Auto-pauses transcription during TTS playback to avoid loopback
 
 ### Quality
 - **VAD filter** — Voice Activity Detection skips silence
@@ -57,12 +65,14 @@
 | **Python** | 3.10+ |
 | **RAM** | 8 GB+ |
 
-### VRAM Usage
-| Model | VRAM |
-|---|---|
-| Whisper medium | ~2 GB |
-| Qwen 3 1.7B | ~2.5 GB |
-| **Total** | **~4.5 GB** |
+### VRAM / Resource Usage
+| Model | VRAM | Device |
+|---|---|---|
+| Whisper medium | ~2 GB | GPU |
+| Qwen 3 1.7B | ~2.5 GB | GPU |
+| ReazonSpeech k2 | ~159 MB | CPU |
+| **Total (Whisper)** | **~4.5 GB** | |
+| **Total (ReazonSpeech)** | **~2.5 GB** | |
 
 ---
 
@@ -126,10 +136,14 @@ python -X utf8 main.py
 ### Basic Workflow
 
 1. **Select languages** — Choose input language (e.g. 🇯🇵 Japanese) and output language (e.g. 🇻🇳 Vietnamese)
-2. **Select audio source** — `🔊 Loa` (speaker/loopback) for interviews, `🎙 Mic` for practice
-3. **Click ▶ Start** — Whisper loads first, then Qwen loads (VRAM ordering)
-4. **Watch real-time transcription** — Left panel shows source text, right panel shows translation
-5. **Ask AI** — Click the AI button to send transcribed text to Copilot/Claude/ChatGPT
+2. **Select STT engine** — Whisper (multi-language, GPU) or ReazonSpeech (Japanese, CPU)
+3. **Select chunk size** — 1s (fastest) to 10s (most context) transcription interval
+4. **Select audio source** — `🔊 Loa` (speaker/loopback) for interviews, `🎙 Mic` for practice
+5. **Click ▶ Start** — STT engine loads first, then Qwen loads (VRAM ordering)
+6. **Toggle features** — 🌐 Translation, 🔊 TTS, 🧠 AI Analysis, 👥 Diarization (all OFF by default)
+7. **Watch real-time transcription** — Left panel shows source text
+8. **Use AI Analysis** — Click 📝/🔑/⚠️/💡 buttons to analyze transcribed content
+9. **Ask AI** — Click the AI button to send transcribed text to Copilot/Claude/ChatGPT
 
 ### Supported Languages
 
@@ -173,17 +187,31 @@ Terms are saved to `terms.json` and hot-reloaded into the Qwen translation promp
 ## 📁 Project Structure
 
 ```
-├── main.py              # Main application (all-in-one)
-├── geminit.py           # Gemini Live Translate test script
-├── requirements.txt     # Python dependencies
-├── config.example.json  # Config template
-├── config.json          # Your config (gitignored)
-├── terms.json           # Custom interview terms (JP↔VI)
+├── main.py                  # Entry point
+├── app.py                   # Main tkinter UI + orchestration
+├── config.py                # Settings, constants, model config
+├── requirements.txt         # Python dependencies
+├── CHANGELOG.md             # Version history
+├── audio/
+│   ├── loopback.py          # WASAPI loopback capture
+│   └── mic.py               # Microphone capture
+├── stt/
+│   ├── transcriber.py       # Whisper STT engine
+│   ├── sensevoice.py        # ReazonSpeech STT engine
+│   └── diarization.py       # Speaker diarization (pyannote)
+├── translation/
+│   ├── qwen.py              # Qwen 3 translator thread
+│   ├── analysis.py          # AI Analysis (summary/keywords/issues/answers)
+│   └── terms.py             # Custom terminology management
+├── tts/
+│   └── engine.py            # Edge TTS + feedback prevention
+├── ai/
+│   └── automation.py        # Copilot/Claude/ChatGPT window automation
 └── docs/
-    ├── architecture.svg # System architecture diagram
-    ├── flow.svg         # Data flow pipeline diagram
-    ├── ui-mockup.svg    # UI mockup
-    └── features.svg     # Feature overview
+    ├── architecture.svg
+    ├── flow.svg
+    ├── ui-mockup.svg
+    └── features.svg
 ```
 
 ---
@@ -230,6 +258,8 @@ MIT License — free for personal and commercial use.
 - [Qwen 3](https://huggingface.co/Qwen/Qwen3-1.7B) — Alibaba's multilingual LLM
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio) — Speaker diarization
 - [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) — WASAPI loopback support
+- [ReazonSpeech](https://research.reazon.jp/projects/ReazonSpeech/) — Japanese-specialized STT
+- [Edge TTS](https://github.com/rany2/edge-tts) — Microsoft Neural Voices
 
 ---
 
