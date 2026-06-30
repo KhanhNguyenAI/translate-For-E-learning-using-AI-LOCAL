@@ -4,6 +4,7 @@ TTSThread, TTS playback, voice listing (Edge TTS + pygame).
 """
 
 import os
+import time
 import queue
 import threading
 
@@ -43,7 +44,44 @@ except ImportError:
 
 _all_tts_voices: dict[str, list[dict]] = {}
 
+# Set while TTS audio is actually playing.
 tts_speaking = threading.Event()
+
+# When set, transcribers DO NOT pause during TTS (rely on language filter +
+# the recent-TTS-text dedup below to reject the spoken-back translation).
+keep_recording_during_tts = threading.Event()
+
+# ── Recent-TTS-text registry (dedup safety net) ───────────────────────
+_recent_tts_lock = threading.Lock()
+_recent_tts: list[tuple[str, float]] = []   # (normalized_text, expiry_ts)
+_RECENT_TTS_TTL = 8.0
+
+
+def _norm_tts(s: str) -> str:
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
+def note_tts_text(text: str):
+    """Remember a phrase we just spoke, so STT can drop it if captured back."""
+    n = _norm_tts(text)
+    if not n:
+        return
+    with _recent_tts_lock:
+        _recent_tts.append((n, time.time() + _RECENT_TTS_TTL))
+
+
+def is_recent_tts(text: str) -> bool:
+    """True if `text` matches something TTS spoke recently (echo of our own voice)."""
+    n = _norm_tts(text)
+    if not n:
+        return False
+    now = time.time()
+    with _recent_tts_lock:
+        _recent_tts[:] = [(t, e) for (t, e) in _recent_tts if e > now]
+        for t, _ in _recent_tts:
+            if n in t or t in n:
+                return True
+    return False
 
 
 def _load_all_tts_voices():
@@ -154,6 +192,7 @@ class TTSThread(threading.Thread):
             f.write(buf.read())
             tmp_path = f.name
         try:
+            note_tts_text(text)
             tts_speaking.set()
             _play_mp3_on_device(tmp_path, self._get_output_device())
         finally:

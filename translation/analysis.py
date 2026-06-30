@@ -11,7 +11,7 @@ from translation.qwen import load_qwen_translator
 
 ANALYSIS_MODES = {
     "summary": {
-        "label": "📝 Tóm tắt",
+        "label": "📝 Summary",
         "prompt": (
             "Summarize the following conversation concisely in {tgt_name}. "
             "Focus on key points, decisions, and action items. "
@@ -28,7 +28,7 @@ ANALYSIS_MODES = {
         ),
     },
     "issues": {
-        "label": "⚠️ Vấn đề",
+        "label": "⚠️ Issues",
         "prompt": (
             "Analyze the following conversation and identify: "
             "difficult questions, contradictions, unclear points, or potential issues. "
@@ -36,7 +36,7 @@ ANALYSIS_MODES = {
         ),
     },
     "answer": {
-        "label": "💡 Gợi ý trả lời",
+        "label": "💡 Suggestions",
         "prompt": (
             "Based on the following interview conversation, suggest a good answer "
             "for the last question asked. Reply in {tgt_name}. "
@@ -61,10 +61,10 @@ class AnalysisThread(threading.Thread):
         import torch, re
 
         if not self._qwen:
-            self.status_queue.put("⏳ Đang tải Qwen cho analysis...")
+            self.status_queue.put("⏳ Loading Qwen for analysis...")
             self._qwen = load_qwen_translator()
             if not self._qwen:
-                self.result_queue.put(("error", "❌ Không tải được Qwen model"))
+                self.result_queue.put(("error", "❌ Failed to load Qwen model"))
                 return
 
         cfg = ANALYSIS_MODES.get(self.mode)
@@ -81,7 +81,7 @@ class AnalysisThread(threading.Thread):
         ]
 
         try:
-            self.status_queue.put(f"🧠 Đang phân tích ({cfg['label']})...")
+            self.status_queue.put(f"🧠 Analyzing ({cfg['label']})...")
             prompt = self._qwen.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
                 enable_thinking=False,
@@ -99,7 +99,7 @@ class AnalysisThread(threading.Thread):
             result = self._qwen.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
             result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
             self.result_queue.put(("result", result))
-            self.status_queue.put(f"✅ Phân tích xong ({cfg['label']})")
+            self.status_queue.put(f"✅ Analysis done ({cfg['label']})")
         except Exception as e:
-            self.result_queue.put(("error", f"Lỗi analysis: {e}"))
-            self.status_queue.put(f"❌ Lỗi analysis: {e}")
+            self.result_queue.put(("error", f"Analysis error: {e}"))
+            self.status_queue.put(f"❌ Analysis error: {e}")

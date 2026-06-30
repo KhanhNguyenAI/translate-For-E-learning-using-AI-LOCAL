@@ -18,4 +18,4 @@ def _build_terms_hint() -> str:
     if not _custom_terms:
         return ""
     pairs = [f"{k} = {v}" for k, v in _custom_terms.items()]
-    return "Bảng thuật ngữ:\n" + "\n".join(pairs) + "\n\n"
+    return "Glossary:\n" + "\n".join(pairs) + "\n\n"

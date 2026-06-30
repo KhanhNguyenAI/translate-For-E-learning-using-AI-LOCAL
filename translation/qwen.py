@@ -14,13 +14,13 @@ try:
     HAS_TRANSLATOR = True
 except ImportError:
     HAS_TRANSLATOR = False
-    print("[WARN] deep-translator chưa cài — fallback Google Translate tắt")
+    print("[WARN] deep-translator not installed — Google Translate fallback disabled")
 
 HAS_QWEN = False
 
 
 class QwenTranslator:
-    """Dịch đa ngôn ngữ bằng Qwen 3 1.7B chạy local GPU."""
+    """Multi-language translator using Qwen 3 1.7B on local GPU."""
 
     def __init__(self, model_name: str = None, device: str = "auto"):
         import torch
@@ -96,7 +96,7 @@ def load_qwen_translator() -> QwenTranslator | None:
 
 
 class TranslatorThread(threading.Thread):
-    """Nhận text từ queue, dịch bằng Qwen (ưu tiên) hoặc Google Translate."""
+    """Receives text from queue, translates via Qwen (primary) or Google Translate (fallback)."""
 
     def __init__(self, src_queue, tgt_queue, err_queue, status_queue=None,
                  wait_for_event: threading.Event = None,
@@ -120,14 +120,14 @@ class TranslatorThread(threading.Thread):
 
     def run(self):
         if self._wait_for:
-            self._set_status("⏳ Đợi Whisper load xong...")
+            self._set_status("⏳ Waiting for STT model to load...")
             self._wait_for.wait(timeout=120)
 
-        self._set_status("\U0001f916 Đang tải Qwen 3 dịch thuật...")
+        self._set_status("\U0001f916 Loading Qwen 3 translator...")
         self._qwen = load_qwen_translator()
         if self._qwen:
             self.engine_name = "Qwen 3 1.7B"
-            self._set_status("\U0001f916 Dịch thuật: Qwen 3 1.7B (local GPU)")
+            self._set_status("\U0001f916 Translator: Qwen 3 1.7B (local GPU)")
         else:
             if HAS_TRANSLATOR:
                 src, tgt = self._get_lang_pair()
@@ -135,12 +135,12 @@ class TranslatorThread(threading.Thread):
                     self._google = GoogleTranslator(source=src, target=tgt)
                     self._google_pair = (src, tgt)
                     self.engine_name = "Google Translate"
-                    self._set_status("\U0001f310 Dịch thuật: Google Translate (fallback)")
+                    self._set_status("\U0001f310 Translator: Google Translate (fallback)")
                 except Exception as e:
-                    self.err_queue.put(f"Không khởi tạo được translator: {e}")
+                    self.err_queue.put(f"Failed to initialize translator: {e}")
                     return
             else:
-                self.err_queue.put("Không có engine dịch nào khả dụng")
+                self.err_queue.put("No translation engine available")
                 return
 
         while not self._stop.is_set():
@@ -168,7 +168,7 @@ class TranslatorThread(threading.Thread):
                 if tgt_text:
                     self.tgt_queue.put((seg_id, tgt_text))
             except Exception as e:
-                self.err_queue.put(f"Lỗi dịch ({self.engine_name}): {e}")
+                self.err_queue.put(f"Translation error ({self.engine_name}): {e}")
 
     def stop(self):
         self._stop.set()

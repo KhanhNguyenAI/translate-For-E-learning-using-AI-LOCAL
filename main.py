@@ -20,10 +20,11 @@ if sys.platform == "win32":
                     os.add_dll_directory(str(_bin))
                     print(f"[DLL] Added: {_bin}")
 
-import tkinter as tk
+from PySide6.QtWidgets import QApplication
 from app import App
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = App()
+    window.show()
+    sys.exit(app.exec())

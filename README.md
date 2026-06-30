@@ -4,22 +4,26 @@
 
 **Fully local, GPU-accelerated** real-time speech-to-text, translation, and AI analysis app designed for online interviews (Teams, Zoom, Google Meet). Captures speaker audio via WASAPI loopback or microphone, transcribes with Whisper or ReazonSpeech, translates with Qwen 3, and provides AI-powered content analysis — all running locally. Zero cloud cost.
 
-![UI Mockup](docs/ui-mockup.svg)
+![UI Mockup](docs/img/ui-mockup.svg)
 
 ---
 
 ## ✨ Features
 
-![Features Overview](docs/features.svg)
+![Features Overview](docs/img/features.svg)
 
 ### Core
 - **Dual STT engine** — Whisper medium (99 languages, GPU) or ReazonSpeech k2-asr (Japanese-specialized, CPU)
-- **Adjustable chunk size** — 1s / 2s / 4s / 6s / 8s / 10s transcription interval for speed vs accuracy
+- **Chunk size + Auto endpoint** — fixed 1–10s interval, or `Auto` (VAD detects the sentence boundary by silence, then translates a full sentence)
 - **Local AI translation** — Qwen 3 1.7B runs entirely on GPU. Zero API cost, fully offline
-- **AI Analysis** — Qwen-powered panel with 4 modes: Summary, Keywords, Issues, Answer Suggestions
+- **AI Chat popup** — chat with **local Qwen** or **cloud Gemini** (switchable, streaming); insert the source/translation transcript as context
 - **Speaker diarization** — pyannote.audio identifies and color-codes up to 5 speakers across chunks
-- **3-panel UI** — Source (STT) | Translation | AI Analysis with toggleable panels
+- **Modern PySide6 UI** — single-row toolbar (language pill, feature toggles), settings drawer, 2 resizable panels (Source | Translation), dark theme
 - **FIFO segment pairing** — Each source segment gets a `seg_id`, translation replaces the `⏳` placeholder when ready
+
+### Productivity
+- **Inline translate (global hotkey)** — select text in *any* app, press `Ctrl+Alt+T` → it's replaced in place with the translation (Qwen or Gemini)
+- **Transcript recording** — save the source transcript live to a folder as `txt` / `md` / `srt`
 
 ### Audio
 - **WASAPI Loopback** — Capture system/speaker audio (hear what the interviewer says)
@@ -33,7 +37,7 @@
 
 ### TTS (Text-to-Speech)
 - **Edge TTS** — Microsoft Neural Voices for reading translations aloud
-- **TTS feedback prevention** — Auto-pauses transcription during TTS playback to avoid loopback
+- **TTS feedback prevention (3-layer)** — keeps recording during TTS (no data loss) while rejecting its own voice via language filter + recent-TTS-text dedup
 
 ### Quality
 - **VAD filter** — Voice Activity Detection skips silence
@@ -45,13 +49,13 @@
 
 ## 🏗 Architecture
 
-![Architecture](docs/architecture.svg)
+![Architecture](docs/img/architecture.svg)
 
 ---
 
 ## 🔄 Data Flow
 
-![Data Flow](docs/flow.svg)
+![Data Flow](docs/img/flow.svg)
 
 ---
 
@@ -111,15 +115,22 @@ Edit `config.json`:
 {
   "hf_token": "hf_YOUR_HUGGINGFACE_TOKEN",
   "gemini_api_key": "YOUR_GEMINI_API_KEY",
-  "qwen_model": "Qwen/Qwen3-1.7B"
+  "qwen_model": "Qwen/Qwen3-1.7B",
+  "record_dir": "",
+  "inline_enabled": false,
+  "inline_from": "vi",
+  "inline_to": "ja",
+  "inline_engine": "Qwen local"
 }
 ```
 
 | Key | Required | Purpose |
 |---|---|---|
 | `hf_token` | For diarization | HuggingFace token for pyannote.audio |
-| `gemini_api_key` | Optional | For Gemini Live Translate (geminit.py) |
+| `gemini_api_key` | Optional | Gemini AI Chat + inline translate (cloud engine) |
 | `qwen_model` | Optional | Override Qwen model name (default: Qwen/Qwen3-1.7B) |
+| `record_dir` | Optional | Default folder for transcript recording |
+| `inline_*` | Optional | Inline-translate settings (set from the UI) |
 
 ### 5. Run
 
@@ -140,10 +151,11 @@ python -X utf8 main.py
 3. **Select chunk size** — 1s (fastest) to 10s (most context) transcription interval
 4. **Select audio source** — `🔊 Loa` (speaker/loopback) for interviews, `🎙 Mic` for practice
 5. **Click ▶ Start** — STT engine loads first, then Qwen loads (VRAM ordering)
-6. **Toggle features** — 🌐 Translation, 🔊 TTS, 🧠 AI Analysis, 👥 Diarization (all OFF by default)
-7. **Watch real-time transcription** — Left panel shows source text
-8. **Use AI Analysis** — Click 📝/🔑/⚠️/💡 buttons to analyze transcribed content
+6. **Toggle features** — 🌐 Translate, 🔊 TTS, 👥 Speakers (diarization) — all OFF by default
+7. **Watch real-time transcription** — Left panel shows source text, right shows translation
+8. **AI Chat** — Click 🧠 AI Chat to open the popup; chat with local Qwen or cloud Gemini, insert the transcript as context
 9. **Ask AI** — Click the AI button to send transcribed text to Copilot/Claude/ChatGPT
+10. **Settings drawer (⚙)** — engine, chunk/Auto, devices, TTS, recording folder/format, inline translate
 
 ### Supported Languages
 
@@ -161,6 +173,7 @@ Whisper supports 99 languages total — add more in `SUPPORTED_LANGS` dict.
 
 | Shortcut | Action |
 |---|---|
+| `Ctrl+Alt+T` | **Inline translate** — replace selected text in any app (global) |
 | `Ctrl+Enter` | Send to selected AI (Copilot) |
 | `Ctrl+Shift+Enter` | Send to Claude |
 | `Ctrl+Shift+C` | Copy source text |
@@ -187,8 +200,12 @@ Terms are saved to `terms.json` and hot-reloaded into the Qwen translation promp
 ## 📁 Project Structure
 
 ```
-├── main.py                  # Entry point
-├── app.py                   # Main tkinter UI + orchestration
+├── main.py                  # Entry point (QApplication)
+├── app.py                   # Main PySide6 UI + orchestration
+├── chat_dialog.py           # AI Chat popup (Gemini / local Qwen)
+├── inline_translate.py      # Global-hotkey inline translate (Ctrl+Alt+T)
+├── gemini_client.py         # Cached Gemini client + fast config
+├── recorder.py              # Transcript recording (txt/md/srt)
 ├── config.py                # Settings, constants, model config
 ├── requirements.txt         # Python dependencies
 ├── CHANGELOG.md             # Version history
@@ -196,22 +213,18 @@ Terms are saved to `terms.json` and hot-reloaded into the Qwen translation promp
 │   ├── loopback.py          # WASAPI loopback capture
 │   └── mic.py               # Microphone capture
 ├── stt/
-│   ├── transcriber.py       # Whisper STT engine
-│   ├── sensevoice.py        # ReazonSpeech STT engine
+│   ├── transcriber.py       # Whisper STT (fixed + Auto VAD endpoint)
+│   ├── sensevoice.py        # ReazonSpeech STT (fixed + Auto VAD endpoint)
 │   └── diarization.py       # Speaker diarization (pyannote)
 ├── translation/
 │   ├── qwen.py              # Qwen 3 translator thread
-│   ├── analysis.py          # AI Analysis (summary/keywords/issues/answers)
 │   └── terms.py             # Custom terminology management
 ├── tts/
-│   └── engine.py            # Edge TTS + feedback prevention
+│   └── engine.py            # Edge TTS + 3-layer feedback prevention
 ├── ai/
 │   └── automation.py        # Copilot/Claude/ChatGPT window automation
 └── docs/
-    ├── architecture.svg
-    ├── flow.svg
-    ├── ui-mockup.svg
-    └── features.svg
+    └── img/                 # README diagrams + screenshots
 ```
 
 ---

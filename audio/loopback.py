@@ -59,7 +59,7 @@ class AudioLoopback:
                 return dev
         for dev in self.pa.get_loopback_device_info_generator():
             return dev
-        raise RuntimeError("Không tìm thấy WASAPI loopback nào.")
+        raise RuntimeError("No WASAPI loopback device found.")
 
     def start(self):
         dev = self._find_device()
