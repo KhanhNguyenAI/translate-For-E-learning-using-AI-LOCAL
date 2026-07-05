@@ -13,3 +13,15 @@ pygame>=2.5
 # ReazonSpeech (fast Japanese-specialized STT)
 sherpa-onnx>=1.10
 reazonspeech-k2-asr>=3.0
+# UI
+PySide6>=6.6
+# Translation fallback + speaker diarization
+deep-translator>=1.11
+pyannote.audio>=3.1
+# AI chat / inline translate (cloud engine)
+google-genai>=1.0
+# System monitor (RAM / VRAM / CPU / GPU)
+psutil>=5.9
+nvidia-ml-py>=12.0
+# Mind map export (docx)
+python-docx>=1.1

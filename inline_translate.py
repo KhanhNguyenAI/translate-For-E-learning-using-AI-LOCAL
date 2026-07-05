@@ -13,8 +13,9 @@ import ctypes
 import threading
 from ctypes import wintypes
 
-from PySide6.QtCore import QObject, Signal, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Signal, QTimer, Qt
+from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QFrame
 
 
 # Win32 constants
@@ -110,8 +111,63 @@ class GlobalHotkey(QObject):
             user32.UnregisterHotKey(None, 1)
 
 
+class ResultPopup(QWidget):
+    """Small floating box that shows the translation near the cursor."""
+    def __init__(self):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setMaximumWidth(380)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        frame = QFrame(); frame.setObjectName("pop")
+        frame.setStyleSheet(
+            "#pop{background:#161b22;border:1px solid #30363d;border-radius:10px;}")
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(12, 10, 12, 10); fl.setSpacing(5)
+        self._src = QLabel(); self._src.setWordWrap(True)
+        self._src.setStyleSheet("color:#6e7681; font-size:11px;")
+        self._txt = QLabel(); self._txt.setWordWrap(True)
+        self._txt.setStyleSheet("color:#e6edf3; font-size:14px;")
+        self._txt.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        fl.addWidget(self._src); fl.addWidget(self._txt)
+        lay.addWidget(frame)
+
+        self._timer = QTimer(self); self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+    def show_text(self, src, text):
+        src = src.strip()
+        self._src.setText(src[:120] + ("…" if len(src) > 120 else ""))
+        self._txt.setText(text)
+        self.adjustSize()
+        self._reposition()
+        self.show(); self.raise_()
+        self._timer.start(12000)             # auto-dismiss after 12s
+
+    def _reposition(self):
+        pos = QCursor.pos()
+        x, y = pos.x() + 14, pos.y() + 18
+        scr = QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
+        g = scr.availableGeometry()
+        w, h = self.width(), self.height()
+        if x + w > g.right():
+            x = g.right() - w - 4
+        if y + h > g.bottom():
+            y = pos.y() - h - 12
+        self.move(max(g.left() + 4, x), max(g.top() + 4, y))
+
+    def mousePressEvent(self, e):
+        self.hide()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.hide()
+
+
 class InlineTranslator(QObject):
-    """Replace the selected text with its translation, in place."""
+    """Translate the selected text — replace it in place, or show a popup."""
     status = Signal(str)
     _translated = Signal()
 
@@ -122,12 +178,15 @@ class InlineTranslator(QObject):
         self._old = ""
         self._sel = ""
         self._result = None
+        self._mode = "replace"
+        self._popup = None
         self._translated.connect(self._after_translate)
 
-    def trigger(self):
+    def trigger(self, mode="replace"):
         if self._busy:
             return
         self._busy = True
+        self._mode = mode
         cb = QApplication.instance().clipboard()
         self._old = cb.text()
         _release_modifiers()              # let go of the still-held Ctrl+Alt from the hotkey
@@ -162,14 +221,29 @@ class InlineTranslator(QObject):
         self._result = None
         if not out or not out.strip():
             self.status.emit("⚠️ Inline: bản dịch trống")
+            self._restore_clip()
             self._busy = False
             return
-        cb = QApplication.instance().clipboard()
-        cb.setText(out)
-        send_ctrl_key(0x56)               # Ctrl+V (paste over selection)
-        QTimer.singleShot(160, self._restore)
+        if self._mode == "popup":
+            self._show_popup(self._sel, out)
+            self._restore_clip()          # don't touch the text — just restore clipboard
+            self._busy = False
+            self.status.emit("✅ Translated")
+        else:
+            cb = QApplication.instance().clipboard()
+            cb.setText(out)
+            send_ctrl_key(0x56)           # Ctrl+V (paste over selection)
+            QTimer.singleShot(160, self._restore)
+
+    def _show_popup(self, src, text):
+        if self._popup is None:
+            self._popup = ResultPopup()
+        self._popup.show_text(src, text)
+
+    def _restore_clip(self):
+        QApplication.instance().clipboard().setText(self._old)
 
     def _restore(self):
-        QApplication.instance().clipboard().setText(self._old)
+        self._restore_clip()
         self.status.emit("✅ Inline translate done")
         self._busy = False

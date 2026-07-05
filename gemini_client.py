@@ -36,6 +36,21 @@ def fast_config(model: str):
     return None
 
 
+def chat_config(model: str, web_search: bool = True):
+    """Config for chat: enable Google Search grounding (fresh, factual answers).
+    Thinking is left ON (default) for depth — chat isn't latency-critical."""
+    try:
+        from google.genai import types
+        tools = []
+        if web_search:
+            tools.append(types.Tool(google_search=types.GoogleSearch()))
+        if tools:
+            return types.GenerateContentConfig(tools=tools)
+    except Exception:
+        pass
+    return None
+
+
 def warm_gemini(api_key: str, model: str = "gemini-2.5-flash"):
     """Open the connection ahead of time so the first real call is fast.
     Best-effort: errors (expired key / offline) are ignored."""

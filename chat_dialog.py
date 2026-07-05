@@ -9,7 +9,7 @@ import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QPushButton,
-    QTextEdit, QPlainTextEdit, QToolButton, QMenu,
+    QTextEdit, QPlainTextEdit, QToolButton, QMenu, QCheckBox,
 )
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QKeyEvent
 from PySide6.QtCore import Qt, QObject, Signal
@@ -46,12 +46,13 @@ class ChatWorker(QObject):
     done = Signal()
     error = Signal(str)
 
-    def __init__(self, engine, history, model, qwen_getter):
+    def __init__(self, engine, history, model, qwen_getter, web_search=True):
         super().__init__()
         self._engine = engine
         self._history = history          # list of {"role": "user"|"model", "text": str}
         self._model = model
         self._qwen_getter = qwen_getter
+        self._web = web_search
         self._stop = False
 
     def start(self):
@@ -76,14 +77,14 @@ class ChatWorker(QObject):
             self.error.emit("No Gemini API key in config.json")
             return
         from google.genai import types
-        from gemini_client import get_gemini_client, fast_config
+        from gemini_client import get_gemini_client, chat_config
 
         client = get_gemini_client(GEMINI_API_KEY)
         contents = [
             types.Content(role=h["role"], parts=[types.Part(text=h["text"])])
             for h in self._history
         ]
-        cfg = fast_config(self._model)
+        cfg = chat_config(self._model, self._web)
         kwargs = {"config": cfg} if cfg else {}
         stream = client.models.generate_content_stream(
             model=self._model, contents=contents, **kwargs,
@@ -165,6 +166,10 @@ class ChatDialog(QDialog):
         self._model_lbl.setStyleSheet("color:#6e7681; font-size:11px;")
         top.addWidget(self._model_lbl)
         top.addStretch()
+        self._web_cb = QCheckBox("🌐 Web")
+        self._web_cb.setChecked(True)
+        self._web_cb.setToolTip("Let Gemini search the web for fresh, factual answers")
+        top.addWidget(self._web_cb)
         b_clear = QPushButton("Clear")
         b_clear.clicked.connect(self._clear_chat)
         top.addWidget(b_clear)
@@ -255,6 +260,7 @@ class ChatDialog(QDialog):
             history=list(self._history),
             model=GEMINI_MODEL,
             qwen_getter=self._get_qwen,
+            web_search=self._web_cb.isChecked(),
         )
         self._worker.chunk.connect(self._on_chunk)
         self._worker.error.connect(self._on_error)

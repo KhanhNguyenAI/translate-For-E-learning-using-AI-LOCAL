@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QComboBox, QCheckBox, QRadioButton, QButtonGroup, QTextEdit, QSplitter,
     QFrame, QToolButton, QMenu, QDialog, QApplication, QDockWidget, QFormLayout,
-    QFileDialog, QSizePolicy,
+    QFileDialog, QSizePolicy, QProgressBar, QScrollArea,
 )
 from PySide6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QShortcut, QKeySequence,
@@ -24,6 +24,8 @@ from config import (
     INLINE_FROM, INLINE_TO, INLINE_ENGINE, INLINE_ENABLED,
 )
 from inline_translate import GlobalHotkey, InlineTranslator
+from system_monitor import SystemMonitor
+from mindmap import MindmapWorker, MindmapDialog
 from audio import AudioLoopback, AudioMic, list_loopback_devices, list_mic_devices
 from stt import (
     Transcriber, ReazonSpeechTranscriber, load_diarization_pipeline, _speaker_registry,
@@ -157,14 +159,29 @@ QPushButton#swap { background:transparent; border:none; color:#6e7681; padding:0
 QPushButton#swap:hover { color:#c9d1d9; }
 QPushButton#chatBtn { background:rgba(210,168,255,0.12); border:1px solid rgba(210,168,255,0.30); border-radius:7px; color:#d2a8ff; padding:5px 11px; }
 QPushButton#chatBtn:hover { background:rgba(210,168,255,0.22); }
+QToolButton#aiMenu { background:rgba(210,168,255,0.12); border:1px solid rgba(210,168,255,0.30); border-radius:7px; color:#d2a8ff; padding:5px 12px; font-weight:500; }
+QToolButton#aiMenu:hover { background:rgba(210,168,255,0.20); }
+QToolButton#aiMenu::menu-indicator { image:none; width:0; }
 QPushButton#gear { background:#1c2128; border:1px solid #2a3038; border-radius:7px; color:#8b949e; }
 QPushButton#gear:hover { background:#30363d; color:#c9d1d9; }
 
 /* ── Settings drawer ── */
 QDockWidget { color:#c9d1d9; titlebar-close-icon:none; titlebar-normal-icon:none; }
 QDockWidget::title { background:#161b22; padding:7px 10px; border-bottom:1px solid #2a3038; }
+QScrollArea { border:none; background:transparent; }
+QWidget#section { border:1px solid #2a3038; border-radius:9px; }
+QPushButton#secHead { text-align:left; background:#1c2128; border:none;
+    border-top-left-radius:8px; border-top-right-radius:8px; padding:8px 11px;
+    color:#c9d1d9; font-weight:500; font-size:12px; }
+QPushButton#secHead:hover { background:#22272e; }
 QStatusBar { background:#161b22; border-top:1px solid #2a3038; }
 QStatusBar::item { border:none; }
+
+/* ── System monitor ── */
+QProgressBar { background:#161b22; border:1px solid #30363d; border-radius:5px; height:16px; text-align:center; color:#c9d1d9; font-size:10px; }
+QProgressBar::chunk { border-radius:4px; }
+QPushButton#sysmon { background:transparent; border:none; color:#8b949e; font-size:11px; padding:0 8px; }
+QPushButton#sysmon:hover { color:#c9d1d9; }
 """
 
 # Flat combos used inside the language pill (no border / no arrow box)
@@ -183,6 +200,37 @@ class _BoolVarAdapter:
 
     def get(self):
         return self._getter()
+
+
+class _Section(QWidget):
+    """Collapsible settings section: a clickable header + a QFormLayout body."""
+    def __init__(self, title, icon="", expanded=True, parent=None):
+        super().__init__(parent)
+        self.setObjectName("section")
+        self._icon = icon
+        self._title = title
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        self._btn = QPushButton()
+        self._btn.setObjectName("secHead")
+        self._btn.setCheckable(True)
+        self._btn.setChecked(expanded)
+        self._btn.toggled.connect(self._sync)
+        v.addWidget(self._btn)
+        self._body = QWidget()
+        self.form = QFormLayout(self._body)
+        self.form.setContentsMargins(11, 8, 11, 10)
+        self.form.setSpacing(8)
+        v.addWidget(self._body)
+        self._sync(expanded)
+
+    def _sync(self, on):
+        self._body.setVisible(on)
+        self._btn.setText(f"{'▾' if on else '▸'}   {self._icon}  {self._title}")
+
+    def addRow(self, *a):
+        self.form.addRow(*a)
 
 
 class App(QMainWindow):
@@ -259,6 +307,8 @@ class App(QMainWindow):
         pill_lay.addWidget(self._tgt_combo)
         row1.addWidget(pill)
 
+        row1.addWidget(self._bar_label("Input"))
+
         # - Toggle group: Translate / TTS / Speakers -
         tgroup = QFrame(); tgroup.setObjectName("tgroup")
         tg_lay = QHBoxLayout(tgroup)
@@ -277,13 +327,19 @@ class App(QMainWindow):
 
         row1.addStretch()
 
-        # - AI Chat popup -
-        self._chat_btn = QPushButton("\U0001f9e0 AI Chat")
-        self._chat_btn.setObjectName("chatBtn")
-        self._chat_btn.clicked.connect(self._open_chat)
-        row1.addWidget(self._chat_btn)
+        # - AI tools: menu (Chat · Map) -
+        row1.addWidget(self._bar_label("AI tools"))
+        self._ai_menu_btn = QToolButton()
+        self._ai_menu_btn.setObjectName("aiMenu")
+        self._ai_menu_btn.setText("\U0001f9e0 AI  ▾")
+        self._ai_menu_btn.setPopupMode(QToolButton.InstantPopup)
+        m = QMenu(self._ai_menu_btn)
+        m.addAction("\U0001f9e0   AI Chat").triggered.connect(lambda checked=False: self._open_chat())
+        m.addAction("\U0001f5fa   Mind map").triggered.connect(lambda checked=False: self._make_mindmap())
+        self._ai_menu_btn.setMenu(m)
+        row1.addWidget(self._ai_menu_btn)
 
-        # - AI send (click) + model dropdown (▾) -
+        # - Send to external AI: split button (click = send, ▾ = pick model) -
         self._ai_btn = QToolButton()
         self._ai_btn.setText("\U0001f916 Copilot")
         self._ai_btn.setPopupMode(QToolButton.MenuButtonPopup)
@@ -292,8 +348,7 @@ class App(QMainWindow):
         for ai_name, ai_cfg in AI_OPTIONS.items():
             act = ai_menu.addAction(f"{ai_cfg['icon']}  {ai_name}")
             act.triggered.connect(
-                lambda checked=False, n=ai_name, c=ai_cfg: self._select_ai(n, c)
-            )
+                lambda checked=False, n=ai_name, c=ai_cfg: self._select_ai(n, c))
         self._ai_btn.setMenu(ai_menu)
         row1.addWidget(self._ai_btn)
 
@@ -323,6 +378,12 @@ class App(QMainWindow):
         self.status.setStyleSheet("color:#8b949e; font-size:11px;")
         self.statusBar().addWidget(self.status, 1)
 
+        self._sysmon_btn = QPushButton("…")
+        self._sysmon_btn.setObjectName("sysmon")
+        self._sysmon_btn.setToolTip("System monitor — click for details")
+        self._sysmon_btn.clicked.connect(self._toggle_settings)
+        self.statusBar().addPermanentWidget(self._sysmon_btn)
+
         self._refresh_voice_list()
 
         # ── Panels: Source + Target + AI Analysis ─────────────────────
@@ -342,7 +403,10 @@ class App(QMainWindow):
         src_head.addWidget(self._icon_btn("\U0001f5d1", "Clear all", self.clear))
         src_lay.addLayout(src_head)
         self.text_jp = QTextEdit()
-        self.text_jp.setReadOnly(True)
+        self.text_jp.setReadOnly(False)   # editable — paste text to test Map / AI Chat
+        self.text_jp.setPlaceholderText(
+            "Transcript appears here…\nYou can also type or paste text directly "
+            "to try 🗺 Map, 🧠 AI Chat, or the AI send button.")
         self.text_jp.setStyleSheet("background:#111; color:#eee;")
         self.text_jp.setFont(QFont("Yu Gothic UI", self._font_size))
         src_lay.addWidget(self.text_jp)
@@ -391,15 +455,27 @@ class App(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Return"),  self, self.ask_copilot)
         QShortcut(QKeySequence("Ctrl+Shift+Return"), self, self.ask_claude)
 
-        # ── Inline translate (global hotkey Ctrl+Alt+T) ───────────────
+        # ── Inline translate (global hotkeys) ─────────────────────────
+        #   Ctrl+Alt+T = replace selection in place
+        #   Ctrl+Alt+D = show translation in a floating popup (non-destructive)
         self._inline = InlineTranslator(self._inline_translate_text, self)
         self._inline.status.connect(self._flash_status)
-        self._hotkey = GlobalHotkey(0x0002 | 0x0001, 0x54, self)  # Ctrl+Alt+T
-        self._hotkey.activated.connect(self._inline.trigger)
+        self._hotkey = GlobalHotkey(0x0002 | 0x0001, 0x54, self)   # Ctrl+Alt+T
+        self._hotkey.activated.connect(lambda: self._inline.trigger("replace"))
         self._hotkey.failed.connect(lambda m: self._flash_status(f"⚠️ {m}"))
+        self._hotkey2 = GlobalHotkey(0x0002 | 0x0001, 0x44, self)  # Ctrl+Alt+D
+        self._hotkey2.activated.connect(lambda: self._inline.trigger("popup"))
+        self._hotkey2.failed.connect(lambda m: self._flash_status(f"⚠️ {m}"))
         if self._cb_inline.isChecked():
             self._hotkey.start()
+            self._hotkey2.start()
         self._maybe_warm_gemini()
+
+        # ── System monitor ────────────────────────────────────────────
+        self._sysmon = SystemMonitor(2.0, self)
+        self._sysmon.updated.connect(self._on_sysmon)
+        if self._cb_sysmon.isChecked():
+            self._sysmon.start()
 
         # ── Poll timer ────────────────────────────────────────────────
         self._timer = QTimer(self)
@@ -413,6 +489,12 @@ class App(QMainWindow):
         f.setFrameShape(QFrame.VLine)
         f.setStyleSheet("color:#30363d;")
         return f
+
+    @staticmethod
+    def _bar_label(text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color:#6e7681; font-size:10px; padding:0 3px;")
+        return lbl
 
     @staticmethod
     def _make_toggle(text, accent):
@@ -445,6 +527,59 @@ class App(QMainWindow):
 
     def _toggle_settings(self):
         self._settings_dock.setVisible(not self._settings_dock.isVisible())
+
+    # ── System monitor ───────────────────────────────────────────────
+    @staticmethod
+    def _usage_color(pct):
+        return "#f85149" if pct >= 90 else ("#d29922" if pct >= 70 else "#3fb950")
+
+    def _set_bar(self, pb, pct, text):
+        pct = max(0, min(100, int(round(pct))))
+        pb.setValue(pct)
+        pb.setFormat(text)
+        pb.setStyleSheet(
+            f"QProgressBar::chunk{{background:{self._usage_color(pct)};border-radius:4px;}}")
+
+    def _on_sysmon(self, s):
+        if "app_ram_gb" in s:
+            tot = s.get("sys_ram_total_gb", 0) or 1
+            self._set_bar(self._pb_app, s["app_ram_gb"] / tot * 100, f"{s['app_ram_gb']:.1f} GB")
+        if "sys_ram_pct" in s:
+            self._set_bar(self._pb_sram, s["sys_ram_pct"],
+                          f"{s['sys_ram_used_gb']:.1f} / {s['sys_ram_total_gb']:.1f} GB")
+        if "vram_pct" in s:
+            self._set_bar(self._pb_vram, s["vram_pct"],
+                          f"{s['vram_used_gb']:.1f} / {s['vram_total_gb']:.1f} GB")
+        else:
+            self._pb_vram.setValue(0); self._pb_vram.setFormat("N/A")
+        if "gpu_util_pct" in s:
+            self._set_bar(self._pb_gpu, s["gpu_util_pct"], f"{s['gpu_util_pct']:.0f}%")
+        else:
+            self._pb_gpu.setValue(0); self._pb_gpu.setFormat("N/A")
+        if "cpu_total_pct" in s:
+            self._set_bar(self._pb_cpu, s["cpu_total_pct"], f"{s['cpu_total_pct']:.0f}%")
+
+        # Compact status-bar cluster
+        parts = []
+        if "app_ram_gb" in s:
+            parts.append(f"RAM {s['app_ram_gb']:.1f}GB")
+        if "vram_used_gb" in s:
+            parts.append(f"VRAM {s['vram_used_gb']:.1f}/{s['vram_total_gb']:.0f}GB")
+        if "cpu_total_pct" in s:
+            parts.append(f"CPU {s['cpu_total_pct']:.0f}%")
+        self._sysmon_btn.setText("  ·  ".join(parts) if parts else "…")
+        worst = max([s.get("sys_ram_pct", 0), s.get("vram_pct", 0), s.get("cpu_total_pct", 0)])
+        self._sysmon_btn.setStyleSheet(
+            f"QPushButton#sysmon{{background:transparent;border:none;font-size:11px;"
+            f"padding:0 8px;color:{self._usage_color(worst)};}}")
+
+    def _on_sysmon_toggle(self, on):
+        if on:
+            self._sysmon.start()
+            self._sysmon_btn.setVisible(True)
+        else:
+            self._sysmon.stop()
+            self._sysmon_btn.setVisible(False)
 
     def _choose_record_dir(self):
         d = QFileDialog.getExistingDirectory(
@@ -495,23 +630,22 @@ class App(QMainWindow):
         )
 
         panel = QWidget()
-        form = QFormLayout(panel)
-        form.setContentsMargins(12, 12, 12, 12)
-        form.setSpacing(10)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(10)
 
-        # STT engine
+        # ═══ Section: Speech-to-Text ═══════════════════════════════════
+        sec_stt = _Section("Speech-to-Text", "\U0001f3a4", expanded=True)
         self._engine_combo = QComboBox()
         self._engine_combo.addItems(["Whisper", "ReazonSpeech"])
-        form.addRow("STT engine", self._engine_combo)
+        sec_stt.addRow("Engine", self._engine_combo)
 
-        # Chunk size
         self._chunk_combo = QComboBox()
         self._chunk_combo.addItems(["Auto", "1s", "2s", "4s", "6s", "8s", "10s"])
         self._chunk_combo.setCurrentText("4s")
         self._chunk_combo.setToolTip("Auto = wait for the speaker to pause, then translate a full sentence")
-        form.addRow("Chunk size", self._chunk_combo)
+        sec_stt.addRow("Chunk size", self._chunk_combo)
 
-        # Audio source radios
         src_row = QWidget(); sl = QHBoxLayout(src_row)
         sl.setContentsMargins(0, 0, 0, 0); sl.setSpacing(8)
         self._rb_speaker = QRadioButton("\U0001f50a Speaker")
@@ -522,34 +656,35 @@ class App(QMainWindow):
         audio_group.addButton(self._rb_mic)
         self._rb_speaker.toggled.connect(self._refresh_devices)
         sl.addWidget(self._rb_speaker); sl.addWidget(self._rb_mic); sl.addStretch()
-        form.addRow("Audio source", src_row)
+        sec_stt.addRow("Audio source", src_row)
 
-        # Input device
         self.devices = list_loopback_devices()
         dev_names = [n for _, n in self.devices] or ["(No device found)"]
         self.dev_combo = QComboBox()
         self.dev_combo.addItems(dev_names)
-        self.dev_combo.setMinimumWidth(220)
+        self.dev_combo.setMinimumWidth(90)
         default_idx = next(
             (i for i, n in enumerate(dev_names)
              if "Headphone" in n or "Realtek" in n or "Speaker" in n), 0
         )
         self.dev_combo.setCurrentIndex(default_idx)
-        form.addRow("Input device", self.dev_combo)
+        sec_stt.addRow("Input device", self.dev_combo)
+        outer.addWidget(sec_stt)
 
-        # TTS device / voice / speed
+        # ═══ Section: Text-to-Speech ═══════════════════════════════════
+        sec_tts = _Section("Text-to-Speech", "\U0001f508", expanded=False)
         self._tts_devices = list_output_devices()
         tts_dev_names = [n for _, n in self._tts_devices] or ["(Default)"]
         self._tts_dev_combo = QComboBox()
         self._tts_dev_combo.addItems(tts_dev_names)
-        self._tts_dev_combo.setMinimumWidth(220)
+        self._tts_dev_combo.setMinimumWidth(90)
         self._tts_dev_combo.setCurrentIndex(0)
-        form.addRow("TTS device", self._tts_dev_combo)
+        sec_tts.addRow("Device", self._tts_dev_combo)
 
         _load_all_tts_voices()
         self._tts_voice_combo = QComboBox()
-        self._tts_voice_combo.setMinimumWidth(220)
-        form.addRow("TTS voice", self._tts_voice_combo)
+        self._tts_voice_combo.setMinimumWidth(90)
+        sec_tts.addRow("Voice", self._tts_voice_combo)
 
         speed_row = QWidget(); spl = QHBoxLayout(speed_row)
         spl.setContentsMargins(0, 0, 0, 0); spl.setSpacing(6)
@@ -561,9 +696,8 @@ class App(QMainWindow):
         b_preview = QPushButton("▶ Preview")
         b_preview.clicked.connect(self._preview_tts)
         spl.addWidget(self._tts_speed_combo); spl.addWidget(b_preview); spl.addStretch()
-        form.addRow("TTS speed", speed_row)
+        sec_tts.addRow("Speed", speed_row)
 
-        # Keep recording during TTS (no pause) — relies on language filter + echo dedup
         from tts.engine import keep_recording_during_tts
         self._cb_keeprec = QCheckBox("Keep recording (no pause)")
         self._cb_keeprec.setChecked(True)
@@ -571,43 +705,17 @@ class App(QMainWindow):
         self._cb_keeprec.toggled.connect(
             lambda on: keep_recording_during_tts.set() if on else keep_recording_during_tts.clear()
         )
-        form.addRow("During TTS", self._cb_keeprec)
+        sec_tts.addRow("During TTS", self._cb_keeprec)
+        outer.addWidget(sec_tts)
 
-        # Font size
-        font_row = QWidget(); fl = QHBoxLayout(font_row)
-        fl.setContentsMargins(0, 0, 0, 0); fl.setSpacing(6)
-        b_fdown = QPushButton("A-"); b_fdown.setFixedWidth(40); b_fdown.clicked.connect(self._font_down)
-        b_fup = QPushButton("A+"); b_fup.setFixedWidth(40); b_fup.clicked.connect(self._font_up)
-        fl.addWidget(b_fdown); fl.addWidget(b_fup); fl.addStretch()
-        form.addRow("Font size", font_row)
-
-        # View (dual / single)
-        self.dual_btn = QPushButton("\U0001f4d6 Dual")
-        self.dual_btn.clicked.connect(self._toggle_dual)
-        form.addRow("View", self.dual_btn)
-
-        # Glossary
-        b_terms = QPushButton("⚙ Edit glossary")
-        b_terms.clicked.connect(self._open_terms_editor)
-        form.addRow("Glossary", b_terms)
-
-        # Record folder + format
-        self._rec_dir_btn = QPushButton(self._record_dir or "Choose folder…")
-        self._rec_dir_btn.setToolTip(self._record_dir or "")
-        self._rec_dir_btn.clicked.connect(self._choose_record_dir)
-        form.addRow("Record folder", self._rec_dir_btn)
-
-        self._rec_fmt_combo = QComboBox()
-        self._rec_fmt_combo.addItems(["txt", "md", "srt"])
-        form.addRow("Record format", self._rec_fmt_combo)
-
-        # ── Inline translate (global hotkey) ──
+        # ═══ Section: AI · Inline translate ════════════════════════════
+        sec_ai = _Section("AI · Inline translate", "\U0001f9e0", expanded=False)
         lang_display = [f"{SUPPORTED_LANGS[c]['flag']} {SUPPORTED_LANGS[c]['name']}"
                         for c in self._lang_codes]
-        self._cb_inline = QCheckBox("Enable  (Ctrl+Alt+T)")
+        self._cb_inline = QCheckBox("Enable  (Ctrl+Alt+T replace · Ctrl+Alt+D popup)")
         self._cb_inline.setChecked(bool(INLINE_ENABLED))
         self._cb_inline.toggled.connect(self._on_inline_toggle)
-        form.addRow("Inline translate", self._cb_inline)
+        sec_ai.addRow("Inline translate", self._cb_inline)
 
         pair_row = QWidget(); prl = QHBoxLayout(pair_row)
         prl.setContentsMargins(0, 0, 0, 0); prl.setSpacing(6)
@@ -622,16 +730,71 @@ class App(QMainWindow):
         prl.addWidget(self._inline_from_combo)
         prl.addWidget(QLabel("→"))
         prl.addWidget(self._inline_to_combo)
-        form.addRow("Inline pair", pair_row)
+        sec_ai.addRow("Inline pair", pair_row)
 
         self._inline_engine_combo = QComboBox()
         self._inline_engine_combo.addItems(["Qwen local", "Gemini"])
         self._inline_engine_combo.setCurrentText(
             INLINE_ENGINE if INLINE_ENGINE in ("Qwen local", "Gemini") else "Qwen local")
         self._inline_engine_combo.currentIndexChanged.connect(self._save_inline_cfg)
-        form.addRow("Inline engine", self._inline_engine_combo)
+        sec_ai.addRow("Inline engine", self._inline_engine_combo)
+        outer.addWidget(sec_ai)
 
-        dock.setWidget(panel)
+        # ═══ Section: Recording ════════════════════════════════════════
+        sec_rec = _Section("Recording", "\U0001f4c1", expanded=False)
+        self._rec_dir_btn = QPushButton(self._record_dir or "Choose folder…")
+        self._rec_dir_btn.setToolTip(self._record_dir or "")
+        self._rec_dir_btn.clicked.connect(self._choose_record_dir)
+        sec_rec.addRow("Folder", self._rec_dir_btn)
+        self._rec_fmt_combo = QComboBox()
+        self._rec_fmt_combo.addItems(["txt", "md", "srt"])
+        sec_rec.addRow("Format", self._rec_fmt_combo)
+        outer.addWidget(sec_rec)
+
+        # ═══ Section: Display ══════════════════════════════════════════
+        sec_disp = _Section("Display", "\U0001f5a5", expanded=False)
+        font_row = QWidget(); fl = QHBoxLayout(font_row)
+        fl.setContentsMargins(0, 0, 0, 0); fl.setSpacing(6)
+        b_fdown = QPushButton("A-"); b_fdown.setFixedWidth(40); b_fdown.clicked.connect(self._font_down)
+        b_fup = QPushButton("A+"); b_fup.setFixedWidth(40); b_fup.clicked.connect(self._font_up)
+        fl.addWidget(b_fdown); fl.addWidget(b_fup); fl.addStretch()
+        sec_disp.addRow("Font size", font_row)
+        self.dual_btn = QPushButton("\U0001f4d6 Dual")
+        self.dual_btn.clicked.connect(self._toggle_dual)
+        sec_disp.addRow("View", self.dual_btn)
+        b_terms = QPushButton("⚙ Edit glossary")
+        b_terms.clicked.connect(self._open_terms_editor)
+        sec_disp.addRow("Glossary", b_terms)
+        outer.addWidget(sec_disp)
+
+        # ═══ Section: System monitor ═══════════════════════════════════
+        sec_mon = _Section("System monitor", "\U0001f4ca", expanded=True)
+        self._cb_sysmon = QCheckBox("Show in status bar")
+        self._cb_sysmon.setChecked(True)
+        self._cb_sysmon.toggled.connect(self._on_sysmon_toggle)
+        sec_mon.addRow("Monitor", self._cb_sysmon)
+
+        def _mk_bar():
+            b = QProgressBar()
+            b.setRange(0, 100)
+            b.setValue(0)
+            b.setFixedHeight(15)
+            return b
+
+        self._pb_app = _mk_bar();  sec_mon.addRow("App RAM", self._pb_app)
+        self._pb_sram = _mk_bar(); sec_mon.addRow("System RAM", self._pb_sram)
+        self._pb_vram = _mk_bar(); sec_mon.addRow("VRAM", self._pb_vram)
+        self._pb_gpu = _mk_bar();  sec_mon.addRow("GPU", self._pb_gpu)
+        self._pb_cpu = _mk_bar();  sec_mon.addRow("CPU", self._pb_cpu)
+        outer.addWidget(sec_mon)
+
+        outer.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(panel)
+        scroll.setMinimumWidth(280)
+        dock.setWidget(scroll)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         dock.hide()
         self._settings_dock = dock
@@ -766,6 +929,37 @@ class App(QMainWindow):
                 self._qwen_instance = load_qwen_translator()
         return self._qwen_instance
 
+    # ── Mind map ─────────────────────────────────────────────────────
+    def _make_mindmap(self):
+        if getattr(self, "_map_busy", False):
+            return
+        content = self.text_jp.toPlainText().strip()
+        if not content:
+            self._flash_status("⚠️ No transcript to map")
+            return
+        from config import SUPPORTED_LANGS as _SL
+        self._map_lang = self._get_tgt_lang()
+        lang_name = _SL.get(self._map_lang, {}).get("name", "English")
+        self._map_busy = True
+        self.set_status("🗺 Generating mind map...")
+        self._map_worker = MindmapWorker(content, lang_name, self._get_chat_qwen)
+        self._map_worker.done.connect(self._show_mindmap)
+        self._map_worker.error.connect(self._mindmap_error)
+        self._map_worker.start()
+
+    def _show_mindmap(self, code, explanations):
+        self._map_busy = False
+        self.set_status("🗺 Mind map ready")
+        dlg = MindmapDialog(self, code, explanations,
+                            default_dir=self._record_dir or "",
+                            qwen_getter=self._get_chat_qwen,
+                            lang_code=getattr(self, "_map_lang", "en"))
+        dlg.show()
+
+    def _mindmap_error(self, msg):
+        self._map_busy = False
+        self._flash_status(f"⚠️ Mind map: {msg}")
+
     # ── Inline translate ─────────────────────────────────────────────
     def _maybe_warm_gemini(self):
         """Pre-open the Gemini connection so the first inline call is fast."""
@@ -780,10 +974,12 @@ class App(QMainWindow):
     def _on_inline_toggle(self, on):
         if on:
             self._hotkey.start()
-            self._flash_status("⌨️ Inline translate ON (Ctrl+Alt+T)")
+            self._hotkey2.start()
+            self._flash_status("⌨️ Inline ON — Ctrl+Alt+T replace · Ctrl+Alt+D popup")
             self._maybe_warm_gemini()
         else:
             self._hotkey.stop()
+            self._hotkey2.stop()
         from config import save_config_value
         save_config_value("inline_enabled", bool(on))
 
@@ -1065,11 +1261,6 @@ class App(QMainWindow):
     def _select_ai(self, name, cfg):
         self._ai_choice = name
         self._ai_btn.setText(f"\U0001f916 {name}")
-        self._ai_btn.setStyleSheet(
-            f"QToolButton{{background:{cfg['color']}; color:white; border:none; "
-            f"border-radius:4px; padding:4px 8px; font-weight:bold;}}"
-            f"QToolButton::menu-button{{width:14px; border:none;}}"
-        )
 
     def _send_to_ai(self):
         reg = _AI_REGISTRY.get(self._ai_choice)
@@ -1299,4 +1490,8 @@ class App(QMainWindow):
             self._recorder.close()
         if getattr(self, "_hotkey", None):
             self._hotkey.stop()
+        if getattr(self, "_hotkey2", None):
+            self._hotkey2.stop()
+        if getattr(self, "_sysmon", None):
+            self._sysmon.stop()
         event.accept()
