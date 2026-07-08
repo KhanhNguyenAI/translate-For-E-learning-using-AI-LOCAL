@@ -23,9 +23,9 @@ from config import (
     SUPPORTED_LANGS, DEFAULT_FONT_SIZE, HF_TOKEN, RECORD_DIR,
     INLINE_FROM, INLINE_TO, INLINE_ENGINE, INLINE_ENABLED,
 )
-from inline_translate import GlobalHotkey, InlineTranslator
-from system_monitor import SystemMonitor
-from mindmap import MindmapWorker, MindmapDialog
+from translation.inline_translate import GlobalHotkey, InlineTranslator
+from utils.system_monitor import SystemMonitor
+from learning.mindmap import MindmapWorker, MindmapDialog
 from audio import AudioLoopback, AudioMic, list_loopback_devices, list_mic_devices
 from stt import (
     Transcriber, ReazonSpeechTranscriber, load_diarization_pipeline, _speaker_registry,
@@ -33,7 +33,7 @@ from stt import (
 import stt.diarization as _diar_mod
 from translation import TERMS_PATH, _custom_terms, _build_terms_hint
 from translation.qwen import TranslatorThread
-from chat_dialog import ChatDialog
+from ai.chat_dialog import ChatDialog
 from tts import (
     TTSThread, list_output_devices, get_voices_for_lang,
     TTS_DEFAULT_VOICE, TTS_SPEED_OPTIONS,
@@ -600,7 +600,7 @@ class App(QMainWindow):
             if not os.path.isdir(self._record_dir):
                 self._flash_status("⚠️ Record folder not found")
                 return
-            from recorder import RecordWriter
+            from utils.recorder import RecordWriter
             fmt = self._rec_fmt_combo.currentText()
             src_name = SUPPORTED_LANGS.get(self._get_src_lang(), {}).get("name", "")
             try:
@@ -968,7 +968,7 @@ class App(QMainWindow):
         if self._inline_engine_combo.currentText().startswith("Gemini"):
             from config import GEMINI_API_KEY, GEMINI_MODEL
             if GEMINI_API_KEY:
-                from gemini_client import warm_gemini
+                from ai.gemini_client import warm_gemini
                 warm_gemini(GEMINI_API_KEY, GEMINI_MODEL)
 
     def _on_inline_toggle(self, on):
@@ -999,7 +999,7 @@ class App(QMainWindow):
             from config import GEMINI_API_KEY, GEMINI_MODEL, LANG_NAMES_EN
             if not GEMINI_API_KEY:
                 raise RuntimeError("No Gemini API key")
-            from gemini_client import get_gemini_client, fast_config
+            from ai.gemini_client import get_gemini_client, fast_config
             client = get_gemini_client(GEMINI_API_KEY)
             sn = LANG_NAMES_EN.get(src, src)
             tn = LANG_NAMES_EN.get(tgt, tgt)

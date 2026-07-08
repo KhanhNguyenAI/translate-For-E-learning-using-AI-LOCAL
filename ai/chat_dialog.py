@@ -77,7 +77,7 @@ class ChatWorker(QObject):
             self.error.emit("No Gemini API key in config.json")
             return
         from google.genai import types
-        from gemini_client import get_gemini_client, chat_config
+        from ai.gemini_client import get_gemini_client, chat_config
 
         client = get_gemini_client(GEMINI_API_KEY)
         contents = [

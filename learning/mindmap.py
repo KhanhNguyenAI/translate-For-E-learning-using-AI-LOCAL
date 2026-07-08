@@ -212,7 +212,7 @@ def markdown_to_outline(md: str) -> list[tuple[int, str]]:
 # ── AI generation ─────────────────────────────────────────────────────
 def _gen(prompt, qwen_getter):
     if GEMINI_API_KEY:
-        from gemini_client import get_gemini_client, fast_config
+        from ai.gemini_client import get_gemini_client, fast_config
         client = get_gemini_client(GEMINI_API_KEY)
         cfg = fast_config(GEMINI_MODEL)
         kwargs = {"config": cfg} if cfg else {}

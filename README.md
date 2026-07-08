@@ -202,10 +202,6 @@ Terms are saved to `terms.json` and hot-reloaded into the Qwen translation promp
 ```
 ├── main.py                  # Entry point (QApplication)
 ├── app.py                   # Main PySide6 UI + orchestration
-├── chat_dialog.py           # AI Chat popup (Gemini / local Qwen)
-├── inline_translate.py      # Global-hotkey inline translate (Ctrl+Alt+T)
-├── gemini_client.py         # Cached Gemini client + fast config
-├── recorder.py              # Transcript recording (txt/md/srt)
 ├── config.py                # Settings, constants, model config
 ├── requirements.txt         # Python dependencies
 ├── CHANGELOG.md             # Version history
@@ -218,11 +214,19 @@ Terms are saved to `terms.json` and hot-reloaded into the Qwen translation promp
 │   └── diarization.py       # Speaker diarization (pyannote)
 ├── translation/
 │   ├── qwen.py              # Qwen 3 translator thread
+│   ├── inline_translate.py  # Global-hotkey inline translate (Ctrl+Alt+T / D)
 │   └── terms.py             # Custom terminology management
 ├── tts/
 │   └── engine.py            # Edge TTS + 3-layer feedback prevention
 ├── ai/
-│   └── automation.py        # Copilot/Claude/ChatGPT window automation
+│   ├── automation.py        # Copilot/Claude/ChatGPT window automation
+│   ├── gemini_client.py     # Cached Gemini client + fast config
+│   └── chat_dialog.py       # AI Chat popup (Gemini / local Qwen)
+├── learning/
+│   └── mindmap.py           # Memory mind map (markmap) + editor
+├── utils/
+│   ├── recorder.py          # Transcript recording (txt/md/srt)
+│   └── system_monitor.py    # RAM / VRAM / CPU / GPU monitor
 └── docs/
     └── img/                 # README diagrams + screenshots
 ```
